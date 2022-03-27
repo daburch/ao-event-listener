@@ -1,0 +1,103 @@
+input:
+  label: "cron"
+  generate:
+    mapping: root = {}
+    interval: "0 15,45 * * * *"
+
+pipeline:
+  processors:
+    - label: "log_start_message"
+      log:
+        level: INFO
+        message: "Processing message..."
+
+    - branch:
+        processors:
+          - cache:
+              resource: event_listener_cache
+              operator: get
+              key: "last_event"
+        result_map: |
+          meta last_event = content().number()
+
+    - catch:
+        - bloblang: |
+            meta last_event = 0
+
+    - bloblang: |
+        meta offset = 0
+        meta current_event = 0
+
+    - label: call_ao_api
+      while:
+        at_least_once: true
+        check: meta("current_event") == 0 || meta("current_event").number() > meta("last_event").number()
+        max_loops: 5
+        processors:
+          - branch:
+              processors:
+                - http:
+                    url: >-
+                      https://gameinfo.albiononline.com/api/gameinfo/events?limit=25&offset=${! meta("offset") }&guildId=3cPdDcjsThCYeLrlTZBauw
+                    verb: GET
+                    rate_limit: ""
+                    timeout: 10s
+                    parallel: false
+                    headers:
+                      Content-Type: application/json
+
+                - bloblang: root = if errored() { deleted() }
+
+              result_map: |
+                meta offset = meta("offset").number() + 25
+                meta current_event = this.24.EventId
+                root.results = (root.results | []).append(this)
+
+    - label: "flatten_results"
+      bloblang: root.Events = this.results.flatten()
+
+    - label: events_processor
+      bloblang: |
+
+        import "./src/mappers/event_mapper.blobl"
+
+        root.Events = this.apply("map_events")
+        meta last_event = ( root.Events.0.EventId | meta("last_event") )
+        meta processed = root.Events.length()
+
+    - cache:
+        resource: event_listener_cache
+        operator: set
+        key: "last_event"
+        value: '${! meta("last_event") }'
+
+    - label: "log_proccessed_count"
+      log:
+        level: INFO
+        message: 'records_processed: ${! meta("processed") }'
+
+    - bloblang: root = this.Events.sort_by(ele -> ele.EventId)
+
+    - unarchive:
+        format: json_array
+
+    - bloblang: root = if errored() { deleted() }
+
+output:
+  # stdout: {}
+  kafka:
+    addresses:
+      - broker:29092
+    topic: ao_events
+    key: ${! json("EventId") }
+
+rate_limit_resources:
+  - label: event_searches
+    local:
+      count: 10
+      interval: 30m
+
+cache_resources:
+  - label: event_listener_cache
+    redis:
+      url: redis://ao_cache:6379

@@ -1,0 +1,43 @@
+
+map map_events {
+    let last_event = meta("last_event").number()
+    root = this.Events.filter(event -> event.EventId > $last_event).map_each(e -> e.apply("map_event"))
+}
+
+map map_event {
+    root.TimeStamp = this.TimeStamp.format_timestamp_unix()
+    root.EventId = this.EventId
+    root.Killer = this.Killer.apply("map_player")
+    root.Victim = this.Victim.apply("map_player")
+    root.KillFame = this.TotalVictimKillFame
+    root.GroupMemberCount = this.groupMemberCount
+}
+
+map map_player {
+    root.Name = this.Name
+    root.GuildName = this.GuildName
+    root.AverageItemPower = this.AverageItemPower.floor()
+    root.GroupMemberCount = this.GroupMemberCount
+    root.Equipment = this.Equipment.apply("map_equipment")
+}
+
+map map_equipment {
+    root.MainHand = this.MainHand.apply("map_weapon_info")
+	root.OffHand = this.OffHand.apply("map_weapon_info")
+	root.Head = this.Head.apply("map_weapon_info")
+	root.Armor = this.Armor.apply("map_weapon_info")
+	root.Shoes = this.Shoes.apply("map_weapon_info")
+	root.Bag = this.Bag.apply("map_weapon_info")
+	root.Cape = this.Cape.apply("map_weapon_info")
+	root.Mount = this.Mount.apply("map_weapon_info")
+	root.Potion = this.Potion.apply("map_weapon_info")
+	root.Food = this.Food.apply("map_weapon_info")
+}
+
+map map_weapon_info {
+    root.Type = this.Type
+	root.Count = this.Count
+	root.Quality = this.Quality
+	root.ActiveSpells = this.ActiveSpells
+	root.PassiveSpells = this.PassiveSpells
+}
