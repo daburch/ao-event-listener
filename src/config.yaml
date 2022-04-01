@@ -1,7 +1,11 @@
 input:
   label: "cron"
   generate:
-    mapping: root = {}
+    mapping: |
+      root = {
+        "query":"query RegisteredGuilds { registeredGuilds { guildId } }"
+      }
+
     interval: "0 15,45 * * * *"
 
 pipeline:
@@ -11,22 +15,52 @@ pipeline:
         level: INFO
         message: "Processing message..."
 
-    - branch:
+    - label: "get_registered_guilds"
+      http:
+        url: ${GRAPHQL_URL}
+        verb: POST
+        rate_limit: ""
+        timeout: 10s
+        parallel: false
+        headers:
+          Content-Type: application/json
+
+    - label: "deleted_errored_gql"
+      bloblang: root = if errored() { deleted() }
+
+    - label: "extract_guild_id"
+      bloblang: |
+        root = this.data.registeredGuilds.map_each(g -> g.guildId)
+
+    - label: "unarchive_guild_ids"
+      unarchive:
+        format: json_array
+
+    - label: "set_guild_id_meta"
+      bloblang: |
+        meta guildId = content().string().unquote()
+
+    - label: "get_cache"
+      branch:
         processors:
           - cache:
               resource: event_listener_cache
               operator: get
-              key: "last_event"
+              key: 'last_event_${! meta("guildId") }'
         result_map: |
           meta last_event = content().number()
 
-    - catch:
+    - label: "handle_get_cache_error"
+      catch:
         - bloblang: |
+            root = this
             meta last_event = 0
 
-    - bloblang: |
+    - label: "initialize_ao_api_loop"
+      bloblang: |
         meta offset = 0
         meta current_event = 0
+        meta limit = 25
 
     - label: call_ao_api
       while:
@@ -38,9 +72,9 @@ pipeline:
               processors:
                 - http:
                     url: >-
-                      https://gameinfo.albiononline.com/api/gameinfo/events?limit=25&offset=${! meta("offset") }&guildId=3cPdDcjsThCYeLrlTZBauw
+                      ${EVENTS_API_URL}?limit=${! meta("limit") }&offset=${! meta("offset") }&guildId=${! meta("guildId").string() }
                     verb: GET
-                    rate_limit: ""
+                    rate_limit: event_searches
                     timeout: 10s
                     parallel: false
                     headers:
@@ -49,8 +83,9 @@ pipeline:
                 - bloblang: root = if errored() { deleted() }
 
               result_map: |
-                meta offset = meta("offset").number() + 25
-                meta current_event = this.24.EventId
+                let lim = meta("limit").number()
+                meta offset = meta("offset").number() + $lim
+                meta current_event = this.index(this.length() - 1).EventId
                 root.results = (root.results | []).append(this)
 
     - label: "flatten_results"
@@ -65,23 +100,27 @@ pipeline:
         meta last_event = ( root.Events.0.EventId | meta("last_event") )
         meta processed = root.Events.length()
 
-    - cache:
+    - label: "set_cache"
+      cache:
         resource: event_listener_cache
         operator: set
-        key: "last_event"
-        value: '${! meta("last_event") }'
+        key: 'last_event_${! meta("guildId") }'
+        value: '${! meta("last_event").number() }'
 
     - label: "log_proccessed_count"
       log:
         level: INFO
-        message: 'records_processed: ${! meta("processed") }'
+        message: 'records_processed for ${! meta("guildId") }: ${! meta("processed") }'
 
-    - bloblang: root = this.Events.sort_by(ele -> ele.EventId)
+    - label: "sort_events"
+      bloblang: root = this.Events.sort_by(ele -> ele.EventId)
 
-    - unarchive:
+    - label: "unarchive_events"
+      unarchive:
         format: json_array
 
-    - bloblang: root = if errored() { deleted() }
+    - label: "check_unarchive_errors"
+      bloblang: root = if errored() { deleted() }
 
 output:
   # stdout: {}
@@ -91,13 +130,13 @@ output:
     topic: ao_events
     key: ${! json("EventId") }
 
-rate_limit_resources:
-  - label: event_searches
-    local:
-      count: 10
-      interval: 30m
-
 cache_resources:
   - label: event_listener_cache
     redis:
       url: redis://ao_cache:6379
+
+rate_limit_resources:
+  - label: event_searches
+    local:
+      count: 30
+      interval: 30m

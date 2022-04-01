@@ -5,6 +5,7 @@ map map_events {
 }
 
 map map_event {
+    root.InitiatingGuildId = meta("guildId").string()
     root.TimeStamp = this.TimeStamp.format_timestamp_unix()
     root.EventId = this.EventId
     root.Killer = this.Killer.apply("map_player")

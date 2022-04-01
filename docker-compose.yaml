@@ -1,0 +1,17 @@
+---
+version: '3'
+services:
+  ao_event_listener:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ao_event_listener
+    container_name: ao_event_listener
+    restart: unless-stopped
+    environment:
+    - GRAPHQL_URL=${GRAPHQL_URL}
+    - EVENTS_API_URL=${EVENTS_API_URL}
+
+networks:
+  default:
+    name: ao_tools_default
