@@ -12,13 +12,13 @@ map map_event {
     root.Victim = this.Victim.apply("map_player")
     root.KillFame = this.TotalVictimKillFame
     root.GroupMemberCount = this.groupMemberCount
+    root.NumberOfParticipants = this.numberOfParticipants
 }
 
 map map_player {
     root.Name = this.Name
     root.GuildName = this.GuildName
     root.AverageItemPower = this.AverageItemPower.floor()
-    root.GroupMemberCount = this.GroupMemberCount
     root.Equipment = this.Equipment.apply("map_equipment")
 }
 
